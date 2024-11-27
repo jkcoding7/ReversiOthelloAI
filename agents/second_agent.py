@@ -4,15 +4,15 @@ from helpers import get_valid_moves, execute_move, check_endgame
 import copy
 import time
 
-@register_agent("student_agent")
-class StudentAgent(Agent):
+@register_agent("second_agent")
+class SecondAgent(Agent):
     """
     A Reversi agent that uses minimax with alpha-beta pruning.
     """
 
     def __init__(self):
         super().__init__()
-        self.name = "StudentAgent"
+        self.name = "SecondAgent"
         self.depth = 3  # Depth limit for the minimax search
         self.transposition_table = {}  # Dictionary for memoization
 

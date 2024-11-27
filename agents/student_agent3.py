@@ -2,7 +2,7 @@ from agents.agent import Agent
 from store import register_agent
 from helpers import get_valid_moves, execute_move, check_endgame
 import copy
-import time
+import hashlib
 
 @register_agent("student_agent")
 class StudentAgent(Agent):
@@ -18,32 +18,32 @@ class StudentAgent(Agent):
 
     def step(self, board, color, opponent):
         """
-        Choose the best move using minimax with alpha-beta pruning and a time limit.
+        Choose the best move using minimax with alpha-beta pruning.
+
+        Parameters:
+        - board: 2D numpy array representing the game board.
+        - color: Integer representing the agent's color (1 for Player 1/Blue, 2 for Player 2/Brown).
+
+        Returns:
+        - Tuple (x, y): The coordinates of the chosen move.
         """
         legal_moves = get_valid_moves(board, color)
 
         if not legal_moves:
             return None  # No valid moves available, pass turn
 
-        # Start the timer
-        start_time = time.time()
-        time_limit = 2  # Time limit in seconds
+        # Sort the moves by the static evaluation score in descending order (best first)
+        ordered_moves = self.order_moves(legal_moves, board, color)
 
         best_score = float('-inf')
-        best_move = legal_moves[0]
+        best_move = None
         alpha = float('-inf')
         beta = float('inf')
 
-        for move in legal_moves:
-            # Check if time limit is exceeded
-            if time.time() - start_time >= time_limit:
-                break
-
+        for move in ordered_moves:
             simulated_board = copy.deepcopy(board)
             execute_move(simulated_board, move, color)
-
-            # Pass start_time and time_limit to minimax
-            score = self.minimax(simulated_board, self.depth, False, alpha, beta, 3 - color, start_time, time_limit)
+            score = self.minimax(simulated_board, self.depth, False, alpha, beta, 3 - color)
             
             if score > best_score:
                 best_score = score
@@ -53,47 +53,54 @@ class StudentAgent(Agent):
 
         return best_move
 
-    def minimax(self, board, depth, is_maximizing, alpha, beta, color, start_time, time_limit):
+    def minimax(self, board, depth, is_maximizing, alpha, beta, color):
         """
         Minimax algorithm with alpha-beta pruning and time limit.
-        """
-        # Check if time limit is exceeded
-        if time.time() - start_time >= time_limit:
-            return alpha if is_maximizing else beta
+        
+        Parameters:
+        - board: Current game board.
+        - depth: Remaining search depth.
+        - is_maximizing: Whether the current player is maximizing.
+        - alpha: Current alpha value for pruning.
+        - beta: Current beta value for pruning.
+        - color: The current player's color.
+        - start_time: Time when the search began.
+        - time_limit: Maximum allowed time in seconds.
 
+        Returns:
+        - Best evaluation score.
+        """
+        # Convert the board to a tuple representation for memoization
         board_tuple = self.board_to_tuple(board)
         
         # Check if this board configuration is already in the transposition table
         if board_tuple in self.transposition_table:
             return self.transposition_table[board_tuple]
 
+        # Terminal or depth limit condition
         legal_moves = get_valid_moves(board, color)
 
+        # Terminal conditions
         if depth == 0 or not legal_moves:
             return self.evaluate_board(board, color)
 
+        # Order moves based on heuristic evaluation
         ordered_moves = self.order_moves(legal_moves, board, color)
 
         if is_maximizing:
             for move in ordered_moves:
-                # Check if time limit is exceeded
-                if time.time() - start_time >= time_limit:
-                    break
                 simulated_board = copy.deepcopy(board)
                 execute_move(simulated_board, move, color)
-                eval = self.minimax(simulated_board, depth - 1, False, alpha, beta, 3 - color, start_time, time_limit)
+                eval = self.minimax(simulated_board, depth - 1, False, alpha, beta, 3 - color)
                 alpha = max(alpha, eval)
                 if beta <= alpha:
                     return beta
             return alpha
         else:
             for move in ordered_moves:
-                # Check if time limit is exceeded
-                if time.time() - start_time >= time_limit:
-                    break
                 simulated_board = copy.deepcopy(board)
                 execute_move(simulated_board, move, color)
-                eval = self.minimax(simulated_board, depth - 1, True, alpha, beta, 3 - color, start_time, time_limit)
+                eval = self.minimax(simulated_board, depth - 1, True, alpha, beta, 3 - color)
                 beta = min(beta, eval)
                 if beta <= alpha:
                     return alpha
@@ -182,3 +189,53 @@ class StudentAgent(Agent):
             all(board[i][y] == color for i in range(rows)) or  # Full vertical column
             all(board[x][j] == color for j in range(cols))  # Full horizontal row
         )
+
+    def evaluate_board(self, board, color):
+        """
+        Evaluate the board state using a heuristic.
+
+        Parameters:
+        - board: 2D numpy array representing the game board.
+        - color: Integer representing the agent's color (1 or 2).
+
+        Returns:
+        - int: The evaluated score of the board.
+        """
+        total_cells = board.shape[0] * board.shape[1]
+        occupied_cells = sum(1 for x in range(board.shape[0]) for y in range(board.shape[1]) if board[x, y] != 0)
+        game_progress = occupied_cells / total_cells
+
+        # Define dynamic weights based on game progress
+        weights = {
+            "corners": 25 if game_progress < 0.75 else 10,
+            "danger_zone": -15 if game_progress < 0.5 else -5,
+            "mobility": 10 if game_progress < 0.5 else 5,
+            "stability": 5 if game_progress < 0.25 else 15,
+            "disc_count": 1 if game_progress > 0.75 else 0
+        }
+
+        # Heuristic components
+        corners = [(0, 0), (0, board.shape[1] - 1), (board.shape[0] - 1, 0), (board.shape[0] - 1, board.shape[1] - 1)]
+        corner_score = sum(1 for corner in corners if board[corner] == color) * weights["corners"]
+        corner_penalty = sum(1 for corner in corners if board[corner] == 3 - color) * weights["corners"]
+
+        danger_zones = [
+            (0, 1), (1, 0), (1, 1),  # Top-left corner adjacency
+            (0, board.shape[1] - 2), (1, board.shape[1] - 1), (1, board.shape[1] - 2),  # Top-right
+            (board.shape[0] - 2, 0), (board.shape[0] - 1, 1), (board.shape[0] - 2, 1),  # Bottom-left
+            (board.shape[0] - 2, board.shape[1] - 1), (board.shape[0] - 1, board.shape[1] - 2),
+            (board.shape[0] - 2, board.shape[1] - 2)  # Bottom-right
+        ]
+        danger_zone_score = sum(1 for zone in danger_zones if board[zone] == color) * weights["danger_zone"]
+
+        opponent_moves = len(get_valid_moves(board, 3 - color))
+        mobility_score = -opponent_moves * weights["mobility"]
+
+        stable_score = sum(1 for x in range(board.shape[0]) for y in range(board.shape[1])
+                        if board[x, y] == color and self.is_stable(board, (x, y), color)) * weights["stability"]
+
+        disc_count_score = sum(1 for x in range(board.shape[0]) for y in range(board.shape[1]) if board[x, y] == color) \
+                        * weights["disc_count"]
+
+        # Combine all scores
+        return corner_score + corner_penalty + danger_zone_score + mobility_score + stable_score + disc_count_score
