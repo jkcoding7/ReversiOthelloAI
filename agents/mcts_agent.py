@@ -1,53 +1,60 @@
-# Student agent: Add your own agent here
+import math
+import time
 from agents.agent import Agent
 from store import register_agent
-import sys
-import numpy as np
 from copy import deepcopy
-import time
 from helpers import random_move, count_capture, execute_move, check_endgame, get_valid_moves
-import random
 
 
 @register_agent("mcts_agent")
 class MctsAgent(Agent):
     """
-    A class for your implementation. Feel free to use this class to
-    add any helper functionalities needed for your agent.
+    A Monte Carlo Tree Search agent using Upper Confidence Tree (UCT) for tree policy.
     """
 
     def __init__(self):
         super().__init__()
         self.name = "MctsAgent"
-        # Reduced number of simulations per move for autoplay optimization
-        self.simulation_count = 2000
+        self.simulation_time_limit = 2  # Time limit for the step method in seconds
+        self.simulation_count = 5  # Number of rollouts per move
+        self.c = math.sqrt(2)  # Exploration parameter for UCT
 
     def step(self, chess_board, player, opponent):
-        best_move = None
-        best_score = float('-inf')
-
+        start_time = time.time()
         valid_moves = get_valid_moves(chess_board, player)
         if not valid_moves:
             return None  # No valid moves available
 
-        for move in valid_moves:
-            # Simulate with heuristic
-            win_rate = self.simulate(chess_board, move, player, opponent)
-            heuristic_score = self.evaluate_board(chess_board, player)
-            combined_score = win_rate + heuristic_score
+        sorted_moves = self.sort_moves(chess_board, valid_moves, player)
 
-            if combined_score > best_score:
-                best_score = combined_score
-                best_move = move
+        # Initialize statistics for each move
+        move_stats = {move: {"wins": 0, "visits": 0} for move in sorted_moves}
 
+        # Perform simulations within the time limit
+        for move in sorted_moves:
+            if time.time() - start_time >= self.simulation_time_limit:
+                break
+            win_rate = self.simulate(chess_board, move, player, opponent, start_time)
+            move_stats[move]["wins"] += win_rate * self.simulation_count
+            move_stats[move]["visits"] += self.simulation_count
+
+        # Select the move with the highest UCT value
+        best_move = max(
+            sorted_moves,
+            key=lambda move: self.uct_score(
+                move_stats[move]["wins"],
+                move_stats[move]["visits"],
+                sum(stat["visits"] for stat in move_stats.values()),
+            ),
+        )
         return best_move
 
-    def simulate(self, board, move, player, opponent):
+    def simulate(self, board, move, player, opponent, start_time):
         """
-        Perform Monte Carlo simulations for a given move, considering heuristics.
+        Perform Monte Carlo simulations for a given move.
 
         Args:
-            board (numpy.ndarray): The current game board.
+            board (list[list[int]]): The current game board.
             move (tuple): The move to simulate.
             player (int): The current player.
             opponent (int): The opponent player.
@@ -56,81 +63,122 @@ class MctsAgent(Agent):
             float: The win rate for the move after simulations.
         """
         wins = 0
-        total_simulations = self.simulation_count
-
-        for _ in range(total_simulations):
+        for _ in range(self.simulation_count):
+            if time.time() - start_time >= self.simulation_time_limit:
+                break
             simulated_board = deepcopy(board)
             execute_move(simulated_board, move, player)
 
-            winner = self.playout_with_heuristics(simulated_board, player, opponent)
+            # Perform a playout from this position
+            winner = self.playout(simulated_board, opponent, player)
             if winner == player:
                 wins += 1
 
-        return wins / total_simulations if total_simulations > 0 else 0
+        return wins / self.simulation_count if self.simulation_count > 0 else 0
 
-    def playout_with_heuristics(self, board, player, opponent):
+    def playout(self, board, player, opponent):
         """
-        Simulate a heuristic-based playout from the current board state.
-
-        Args:
-            board (numpy.ndarray): The current game board.
-            player (int): The current player.
-            opponent (int): The opponent player.
-
-        Returns:
-            int: The winner (1 for Player 1, 2 for Player 2, or 0 for a draw).
+        Perform a random playout (default policy) from the current board state.
         """
         current_player = player
-        max_turns = 100  # Safety limit for autoplay
-        turn_count = 0
-
-        while not check_endgame(board, player, opponent):
-            valid_moves = get_valid_moves(board, current_player)
-            if valid_moves:
-                # Prioritize moves with higher heuristic values
-                best_move = max(valid_moves, key=lambda move: self.evaluate_board(deepcopy(board), current_player))
-                execute_move(board, best_move, current_player)
-            else:
-                # No valid moves, pass turn
-                pass
-
-            current_player = 3 - current_player  # Switch player
-            turn_count += 1
-
-            if turn_count > max_turns:
-                print("Playout exceeded max_turns, terminating.")
+        while True:
+            is_endgame, p0_score, p1_score = check_endgame(board, current_player, 3 - current_player)
+            if is_endgame:
                 break
 
-        # Evaluate final scores
-        player_score = np.sum(board == player)
-        opponent_score = np.sum(board == opponent)
+            move = random_move(board, current_player)
+            if move:
+                execute_move(board, move, current_player)
 
-        if player_score > opponent_score:
-            return player
-        elif opponent_score > player_score:
-            return opponent
+            current_player = 3 - current_player  # Toggle between player and opponent
+
+        # Determine the winner
+        if p0_score > p1_score:
+            return 1
+        elif p1_score > p0_score:
+            return 2
         return 0  # Draw
 
-    def evaluate_board(self, board, player):
+    def uct_score(self, wins, visits, total_visits):
         """
-        Evaluate the board state for the given player.
+        Calculate the UCT score for a move.
 
         Args:
-            board (numpy.ndarray): The current game board.
+            wins (int): Total wins for the move.
+            visits (int): Total visits for the move.
+            total_visits (int): Total visits to the parent node.
+
+        Returns:
+            float: The UCT score.
+        """
+        if visits == 0:
+            return float("inf")  # Prioritize unvisited moves
+        exploitation = wins / visits
+        exploration = self.c * math.sqrt(math.log(total_visits) / visits)
+        return exploitation + exploration
+    
+    def evaluate_move(self, board, move, player):
+        """
+        Evaluate a move based on its impact on the board.
+        
+        Args:
+            board (list[list[int]]): The current game board.
+            move (tuple): The move to evaluate.
             player (int): The current player.
 
         Returns:
-            int: The heuristic score of the board.
+            int: A score representing the quality of the move.
         """
-        # Corner positions are highly valuable
-        corners = [(0, 0), (0, board.shape[1] - 1), (board.shape[0] - 1, 0), (board.shape[0] - 1, board.shape[1] - 1)]
-        corner_score = sum(1 for corner in corners if board[corner] == player) * 10
-        corner_penalty = sum(1 for corner in corners if board[corner] == 3 - player) * -10
+        temp_board = deepcopy(board)
+        execute_move(temp_board, move, player)
 
-        # Mobility: the number of moves available to the opponent
+        # Example heuristic: corner control and opponent's mobility
+        corners = [(0, 0), (0, len(temp_board[0]) - 1), (len(temp_board) - 1, 0), (len(temp_board) - 1, len(temp_board[0]) - 1)]
+        corner_score = sum(1 for corner in corners if temp_board[corner[0]][corner[1]] == player) * 10
+        corner_penalty = sum(1 for corner in corners if board[corner] == 3 - player) * -25
+
+        # Mobility: Number of valid moves for the opponent
         opponent = 3 - player
-        opponent_moves = len(get_valid_moves(board, opponent))
-        mobility_score = -opponent_moves
+        opponent_moves = len(get_valid_moves(temp_board, opponent))
+        mobility_penalty = -opponent_moves
+
+        # Stable discs: discs that cannot be flipped
+        stable_score = sum(1 for x in range(board.shape[0]) for y in range(board.shape[1])
+                            if board[x, y] == player and self.is_stable(board, (x, y), player))
 
         # Combine heuristic components
-        return corner_score + mobility_score
+        return corner_score + mobility_penalty + corner_penalty + stable_score
+
+    def is_stable(self, board, position, color):
+        """
+        Check if a disc is stable (cannot be flipped).
+
+        Parameters:
+        - board: 2D numpy array representing the game board.
+        - position: Tuple (x, y) of the disc's position.
+        - color: Integer representing the disc's color.
+
+        Returns:
+        - bool: True if the disc is stable, False otherwise.
+        """
+        x, y = position
+        rows, cols = board.shape
+        return board[x, y] == color and (
+            (x == 0 or x == rows - 1) and (y == 0 or y == cols - 1) or  # Corner discs
+            all(board[i][y] == color for i in range(rows)) or  # Full vertical column
+            all(board[x][j] == color for j in range(cols))  # Full horizontal row
+        )
+
+    def sort_moves(self, board, moves, player):
+        """
+        Sort the moves based on their evaluation score.
+
+        Args:
+            board (list[list[int]]): The current game board.
+            moves (list[tuple]): List of valid moves.
+            player (int): The current player.
+
+        Returns:
+            list[tuple]: Sorted list of moves based on evaluation.
+        """
+        return sorted(moves, key=lambda move: self.evaluate_move(board, move, player), reverse=True)

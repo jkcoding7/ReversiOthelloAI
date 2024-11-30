@@ -25,17 +25,18 @@ class StudentAgent(Agent):
         if not legal_moves:
             return None  # No valid moves available, pass turn
 
+        ordered_moves = self.order_moves(legal_moves, board, color)
+
         # Start the timer
         start_time = time.time()
         time_limit = 2  # Time limit in seconds
 
         best_score = float('-inf')
-        best_move = legal_moves[0]
+        best_move = ordered_moves[0]
         alpha = float('-inf')
         beta = float('inf')
 
-        for move in legal_moves:
-            # Check if time limit is exceeded
+        for move in ordered_moves:
             if time.time() - start_time >= time_limit:
                 break
 

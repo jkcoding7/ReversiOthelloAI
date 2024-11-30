@@ -25,16 +25,18 @@ class SecondAgent(Agent):
         if not legal_moves:
             return None  # No valid moves available, pass turn
 
+        ordered_moves = self.order_moves(legal_moves, board, color)
+
         # Start the timer
         start_time = time.time()
         time_limit = 2  # Time limit in seconds
 
         best_score = float('-inf')
-        best_move = legal_moves[0]
+        best_move = ordered_moves[0]
         alpha = float('-inf')
         beta = float('inf')
 
-        for move in legal_moves:
+        for move in ordered_moves:
             # Check if time limit is exceeded
             if time.time() - start_time >= time_limit:
                 break
@@ -70,11 +72,14 @@ class SecondAgent(Agent):
         legal_moves = get_valid_moves(board, color)
 
         if depth == 0 or not legal_moves:
-            return self.evaluate_board(board, color)
+            evaluation = self.evaluate_board(board, color)
+            self.transposition_table[board_tuple] = evaluation
+            return evaluation
 
         ordered_moves = self.order_moves(legal_moves, board, color)
 
         if is_maximizing:
+            max_eval = float('-inf')
             for move in ordered_moves:
                 # Check if time limit is exceeded
                 if time.time() - start_time >= time_limit:
@@ -82,11 +87,14 @@ class SecondAgent(Agent):
                 simulated_board = copy.deepcopy(board)
                 execute_move(simulated_board, move, color)
                 eval = self.minimax(simulated_board, depth - 1, False, alpha, beta, 3 - color, start_time, time_limit)
+                max_eval = max(max_eval, eval)
                 alpha = max(alpha, eval)
                 if beta <= alpha:
-                    return beta
-            return alpha
+                    break
+            self.transposition_table[board_tuple] = max_eval
+            return max_eval
         else:
+            min_eval = float('inf')
             for move in ordered_moves:
                 # Check if time limit is exceeded
                 if time.time() - start_time >= time_limit:
@@ -94,10 +102,12 @@ class SecondAgent(Agent):
                 simulated_board = copy.deepcopy(board)
                 execute_move(simulated_board, move, color)
                 eval = self.minimax(simulated_board, depth - 1, True, alpha, beta, 3 - color, start_time, time_limit)
+                min_eval = min(min_eval, eval)
                 beta = min(beta, eval)
                 if beta <= alpha:
-                    return alpha
-            return beta
+                    break
+            self.transposition_table[board_tuple] = min_eval
+            return min_eval
         
     def order_moves(self, legal_moves, board, color):
         """
@@ -147,21 +157,44 @@ class SecondAgent(Agent):
         Returns:
         - int: The evaluated score of the board.
         """
-        # Corner positions are highly valuable
+        total_cells = board.shape[0] * board.shape[1]
+        occupied_cells = sum(1 for x in range(board.shape[0]) for y in range(board.shape[1]) if board[x, y] != 0)
+        game_progress = occupied_cells / total_cells
+
+        # Define dynamic weights based on game progress
+        weights = {
+            "corners": 25 if game_progress < 0.75 else 10,
+            "danger_zone": -15 if game_progress < 0.5 else -5,
+            "mobility": 10 if game_progress < 0.5 else 5,
+            "stability": 5 if game_progress < 0.25 else 15,
+            "disc_count": 1 if game_progress > 0.75 else 0
+        }
+
+        # Heuristic components
         corners = [(0, 0), (0, board.shape[1] - 1), (board.shape[0] - 1, 0), (board.shape[0] - 1, board.shape[1] - 1)]
-        corner_score = sum(1 for corner in corners if board[corner] == color) * 25
-        corner_penalty = sum(1 for corner in corners if board[corner] == 3 - color) * -25
+        corner_score = sum(1 for corner in corners if board[corner] == color) * weights["corners"]
+        corner_penalty = sum(1 for corner in corners if board[corner] == 3 - color) * weights["corners"]
 
-        # Mobility: the number of moves the opponent can make
+        danger_zones = [
+            (0, 1), (1, 0), (1, 1),  # Top-left corner adjacency
+            (0, board.shape[1] - 2), (1, board.shape[1] - 1), (1, board.shape[1] - 2),  # Top-right
+            (board.shape[0] - 2, 0), (board.shape[0] - 1, 1), (board.shape[0] - 2, 1),  # Bottom-left
+            (board.shape[0] - 2, board.shape[1] - 1), (board.shape[0] - 1, board.shape[1] - 2),
+            (board.shape[0] - 2, board.shape[1] - 2)  # Bottom-right
+        ]
+        danger_zone_score = sum(1 for zone in danger_zones if board[zone] == color) * weights["danger_zone"]
+
         opponent_moves = len(get_valid_moves(board, 3 - color))
-        mobility_score = -opponent_moves
+        mobility_score = -opponent_moves * weights["mobility"]
 
-        # Stable discs: discs that cannot be flipped
         stable_score = sum(1 for x in range(board.shape[0]) for y in range(board.shape[1])
-                            if board[x, y] == color and self.is_stable(board, (x, y), color))
+                        if board[x, y] == color and self.is_stable(board, (x, y), color)) * weights["stability"]
 
-        # Combine scores
-        return corner_score + corner_penalty + mobility_score + stable_score
+        disc_count_score = sum(1 for x in range(board.shape[0]) for y in range(board.shape[1]) if board[x, y] == color) \
+                        * weights["disc_count"]
+
+        # Combine all scores
+        return corner_score + corner_penalty + danger_zone_score + mobility_score + stable_score + disc_count_score
 
     def is_stable(self, board, position, color):
         """
