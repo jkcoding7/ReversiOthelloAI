@@ -166,7 +166,7 @@ class StudentAgent(Agent):
 
     def is_stable(self, board, position, color):
         """
-        Check if a disc is stable (cannot be flipped), considering corners, rows, columns, and diagonals.
+        Check if a disc is stable (cannot be flipped).
 
         Parameters:
         - board: 2D numpy array representing the game board.
@@ -178,27 +178,10 @@ class StudentAgent(Agent):
         """
         x, y = position
         rows, cols = board.shape
-        if board[x, y] != color:
-            return False
-
-        # Check if the disc is in one of the corners
-        if (x == 0 or x == rows - 1) and (y == 0 or y == cols - 1):
-            return True
-
-        # Check full vertical column
-        if all(board[i][y] == color for i in range(rows)):
-            return True
-
-        # Check full horizontal row
-        if all(board[x][j] == color for j in range(cols)):
-            return True
-
-        # Check diagonal top-left to bottom-right
-        if all(board[i][i] == color for i in range(min(rows, cols))):
-            return True
-
-        # Check diagonal top-right to bottom-left
-        if all(board[i][cols - 1 - i] == color for i in range(min(rows, cols))):
-            return True
-
-        return False
+        return board[x, y] == color and (
+            (x == 0 or x == rows - 1) and (y == 0 or y == cols - 1) or  # Corner discs
+            (all(board[i][y] == color for i in range(rows)) and  # Full vertical column
+            all(board[x][j] == color for j in range(cols)) and  # Full horizontal row
+            all(board[i][i] == color for i in range(min(rows, cols))) and  # Diagonal top-left to bottom-right
+            all(board[i][cols - 1 - i] == color for i in range(min(rows, cols))))  # Diagonal top-right to bottom-left
+        )
