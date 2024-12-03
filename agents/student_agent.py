@@ -180,8 +180,8 @@ class StudentAgent(Agent):
         rows, cols = board.shape
         return board[x, y] == color and (
             (x == 0 or x == rows - 1) and (y == 0 or y == cols - 1) or  # Corner discs
-            (all(board[i][y] == color for i in range(rows)) and  # Full vertical column
-            all(board[x][j] == color for j in range(cols)) and  # Full horizontal row
-            all(board[i][i] == color for i in range(min(rows, cols))) and  # Diagonal top-left to bottom-right
-            all(board[i][cols - 1 - i] == color for i in range(min(rows, cols))))  # Diagonal top-right to bottom-left
+            all(board[i][y] == color for i in range(rows)) or  # Full vertical column
+            all(board[x][j] == color for j in range(cols)) or  # Full horizontal row
+            all(board[i][i] == color for i in range(min(rows, cols))) or  # Diagonal top-left to bottom-right
+            all(board[i][cols - 1 - i] == color for i in range(min(rows, cols)))  # Diagonal top-right to bottom-left
         )
